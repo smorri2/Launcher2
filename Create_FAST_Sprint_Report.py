@@ -8,14 +8,14 @@
 # ******************************************************************************
 
 # Standard library imports
-import sys
-
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime, date
 
 
 # Third party imports
+from dotenv import load_dotenv
 from typing import Type
 import xlsxwriter
 
@@ -24,11 +24,10 @@ import xlsxwriter
 
 
 # SGM Shared Module imports
-# sys.path.insert(1, 'C:/Users/kap3309/OneDrive - Kansas City Life Insurance/PythonDev/Modules')
-sys.path.append('C:/Users/kap3309/OneDrive - Kansas City Life Insurance/PythonDev/Modules')
-from sgmCsvFileReader import get_csv_file_data
-from kclGetFASTProjectInfo import FASTProjectInfo, SprintInfoRec, TeamRec
-from kclGetCsvJiraStoryData import CsvJiraStoryData, JiraStoryRec
+from kclFastSharedDataClasses import *
+from kclGetFastTeams import FASTTeams
+from kclGetFastSprints import FASTSprints
+from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 
 # ******************************************************************************
@@ -39,9 +38,9 @@ from kclGetCsvJiraStoryData import CsvJiraStoryData, JiraStoryRec
 
 @dataclass()
 class InputData:
-    sprint_info: SprintInfoRec = None
-    fast_teams: list[TeamRec] = field(default_factory=list)
-    jira_stories: list[JiraStoryRec] = field(default_factory=list)
+    sprint_info: SprintRec = None
+    team_info: list[TeamRec] = None
+    jira_stories: FastStoryData = None
     success: bool = False
 
 
@@ -114,29 +113,33 @@ class CellFormats:
 # ==============================================================================
 def get_input_data():
 
-    fast_project_info: FASTProjectInfo
     input_data = InputData()
 
-    # get the Program Increment to process from the user via console input
+    # get the Sprint to process from the user via console input
     sprint_to_process = get_sprint_to_process()
 
     print('\n  Begin Getting Input Data ')
 
-    # Get sprint_info for sprint_to_process (eg: name, start_date, end_date, program_increment)
-    success = get_project_info_for_sprint_to_process(sprint_to_process, input_data)
-    if success:
-        # Get the FAST Jira Story data from the 'Jira - Sprint Data.csv' file
-        input_data.jira_stories = \
-            CsvJiraStoryData(Path.cwd() / 'Input files' / 'SGM - Jira - FAST Sprint Data (Jira).csv').stories
-        if input_data.jira_stories is not None:
-            input_data.success = True
-            print('  Success Getting Input Data')
+    # Get Fast Team info, Teams and Members from the FastTeamInfo.csv spreadsheet
+    fast_teams_info = FASTTeams(Path.cwd())
+    if fast_teams_info is not None:
+        input_data.team_info = fast_teams_info.teams
+        # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
+        fast_sprint_info = FASTSprints(Path.cwd())
+        if fast_sprint_info is not None:
+            input_data.sprint_info = fast_sprint_info.get_sprint_info(sprint_to_process)
+            # Get the FAST Jira Story data for the sprint being processed
+            jql_query = create_jql_query(input_data.sprint_info.name[5:])
+            input_data.jira_stories = FastStoryData(jql_query).stories
+            if input_data.jira_stories is not None:
+                input_data.success = True
+                print('   Success Getting Input Data')
+            else:
+                print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
         else:
-            print('\n   *** Error Jira - Sprint Data.csv ***')
-            print('  *** Error Getting Input Data ***')
+            print('   *** Error getting Sprint Info from FastSprintInfo.csv')
     else:
-        print('\n    *** Error getting Sprint information from FAST Project Info.xlsx ***')
-        print('  *** Error Getting Input Data ***')
+        print('   *** Error getting Team Info from FastTeamInfo.csv')
 
     return input_data
 
@@ -173,62 +176,36 @@ def get_sprint_to_process() -> str:
 
 
 # ==============================================================================
-def get_project_info_for_sprint_to_process(sprint_to_process: str, input_data: InputData) -> bool:
+def create_jql_query(sprint_name) -> str:
+    project = 'project = "FAST" AND '
+    sprint = 'Sprint = ' + sprint_name + ' AND '
+    story_type = 'Type in (Bug, Story, Task, Sub-task) AND '
+    status = 'Status in (Done, UAT, QA, Development, "Selected for Development", "Tech Grooming", ' \
+             '"Business Grooming", Backlog) '
+    order_by = 'ORDER BY Key'
+    jql_query = project + sprint + story_type + status + order_by
 
-    success = False
-    # Get the FAST Project Info for All Sprints, Team Members and Program Increments
-    fast_proj_info = FASTProjectInfo(Path.cwd() / 'Input files' / 'FAST Project Info.xlsx')
-    if fast_proj_info is not None:
-        # get info about the sprint_to_process from fast_project_info
-        input_data.sprint_info = fast_proj_info.get_sprint_info(sprint_to_process)
-        if input_data.sprint_info is not None:
-            input_data.fast_teams = fast_proj_info.get_fast_teams()
-            if len(input_data.fast_teams) > 0:
-                success = True
-
-    return success
-
-
-# ==============================================================================
-def get_jira_stories_for_sprint() -> list:
-
-    columns = ['Issue key',
-               'Summary',
-               'Status',
-               'Assignee',
-               'Priority',
-               'Custom field (Story Points)',
-               'Sprint',
-               'Labels',
-               'Issue Type',
-               'Created']
-    csv_file_path = Path.cwd() / 'Input files' / 'SGM - Jira - FAST Sprint Data (Jira).csv'
-    progress_bar_msg = '      Reading Jira Sprint Data'
-    csv_file_data = get_csv_file_data(columns, csv_file_path, progress_bar_msg)
-
-    return csv_file_data
-
+    return jql_query
 
 # ==============================================================================
 def build_sprint_metrics(input_data: InputData) -> MetricsData:
 
-    print('\n  Begin Building Sprint Metrics')
+    print('\n   Begin Building Sprint Metrics')
 
     # initialize the table data for all tables to be written later to the Metrics tab of the report
     metrics_data = init_metrics_data()
 
     pi_plan_name = input_data.sprint_info.program_increment
-    sprint_data = input_data.sprint_info # get the PI Plan name for the sprint
     for story in input_data.jira_stories:
         update_status_metrics_tbl(metrics_data.status, story.status, story.points)
         update_pi_plan_metrics_tbl(metrics_data.pi_plan, pi_plan_name, story.labels, story.status, story.points)
-        update_completed_by_team_metrics_tbl(metrics_data.team, input_data.fast_teams, story.assignee, story.status,
+        update_completed_by_team_metrics_tbl(metrics_data.team, input_data.team_info, story.assignee, story.status,
                                              story.points)
         update_story_category_metrics_tbl(metrics_data.category,input_data.sprint_info.name, story.created,
                                           input_data.sprint_info.start_date, story.sprints, story.points)
         update_story_priority_metrics_tbl(metrics_data.priority, story.priority, story.points)
     metrics_data.success = True
-    print('\n  Success Building Sprint Metrics')
+    print('   Completed Building Sprint Metrics')
 
     return metrics_data
 
@@ -426,7 +403,7 @@ def update_story_priority_metrics_tbl(priority_tbl: PriorityTypes, story_priorit
 
 # ==============================================================================
 def create_jira_sprint_report_spreadsheet(metrics_data: MetricsData, input_data: InputData) -> None:
-    print('\n  Creating Sprint Metrics Report spreadsheet')
+    print('\n   Creating Sprint Metrics Report spreadsheet')
 
     # create the spreadsheet workbook
     relative_path = 'Output files/' + date.today().strftime("%y-%m-%d") + ' ' + input_data.sprint_info.name \
@@ -440,7 +417,7 @@ def create_jira_sprint_report_spreadsheet(metrics_data: MetricsData, input_data:
     write_the_sprint_stories_tab_to_spreadsheet(workbook, cell_formats, input_data.jira_stories)
 
     workbook.close()
-    print('  Completed PI Planning Metrics Spreadsheet')
+    print('   Completed Sprint Metrics Report Spreadsheet')
 
     return None
 
@@ -467,7 +444,7 @@ def create_cell_formatting_options(workbook) -> Type[CellFormats]:
 # ==============================================================================
 def write_the_metrics_tab_to_spreadsheet(workbook: xlsxwriter.Workbook, cell_fmts: Type[CellFormats],
                                          metrics_data: MetricsData) -> None:
-    print('      ** Writing Sprint Metrics spreadsheet tab')
+    print( '     Writing Sprint Metrics spreadsheet tab')
 
     #  Add the Metrics spreadsheet tab to the workbook
     metrics_ws = workbook.add_worksheet('Sprint Metrics')
@@ -504,7 +481,7 @@ def create_metrics_ws_column_layout(metrics_ws, cell_fmts: Type[CellFormats]) ->
 
 # ==============================================================================
 def write_the_status_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], status: StatusTypes) -> None:
-    print('         Writing Sprint Metrics Table to Metrics Worksheet')
+    print('     Writing Sprint Metrics Table to Metrics Worksheet')
 
     # Calculate total number of story points in sprint
     num_story_points_total = status.done.points + status.uat.points + status.qa.points + status.dev.points \
@@ -561,7 +538,7 @@ def write_the_status_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], sta
 
 # ==============================================================================
 def write_the_pi_plan_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], pi_plane: StatusTypes) -> None:
-    print('         Writing PI Plan Metrics Table to Metrics Worksheet')
+    print('     Writing PI Plan Metrics Table to Metrics Worksheet')
 
     # Calculate total number of story points in sprint
     num_story_points_total = pi_plane.done.points + pi_plane.uat.points + pi_plane.qa.points + pi_plane.dev.points \
@@ -619,7 +596,7 @@ def write_the_pi_plan_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], pi
 # ==============================================================================
 def write_the_team_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], teams:list[MetricsRowData]) -> None:
 
-    print('         Writing Team Metrics Table to Metrics Worksheet')
+    print('     Writing Team Metrics Table to Metrics Worksheet')
 
     # Calculate total number of story points for all of the Teams combined
     total_team_points = 0
@@ -664,7 +641,7 @@ def write_the_team_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], teams
 # ==============================================================================
 def write_the_category_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], categories: CategoryTypes) -> None:
 
-    print('         Writing Category Metrics Table to Metrics Worksheet')
+    print('     Writing Category Metrics Table to Metrics Worksheet')
 
     # Calculate total number of story points for all categories combined
     total_category_points = categories.new.points + categories.carryover.points + categories.unplanned.points
@@ -711,7 +688,7 @@ def write_the_category_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], c
 # ==============================================================================
 def write_the_priority_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], priorities: PriorityTypes) -> None:
 
-    print('         Writing Category Metrics Table to Metrics Worksheet')
+    print('     Writing Category Metrics Table to Metrics Worksheet')
 
     # Calculate total number of story points for all priorities combined
     total_priority_points = priorities.highest.points + priorities.high.points + priorities.medium.points\
@@ -785,8 +762,8 @@ def calc_table_starting_and_ending_cells(top_row: int, left_col: str, right_col:
 
 # ==============================================================================
 def write_the_sprint_stories_tab_to_spreadsheet(workbook: xlsxwriter.Workbook, cell_fmts: Type[CellFormats],
-                                                jira_stories: list[JiraStoryRec]) -> None:
-    print('      ** Writing Jira Stories Detail spreadsheet tab')
+                                                jira_stories: list[FastStoryRec]) -> None:
+    print('     Writing Jira Stories Detail spreadsheet tab')
 
     #  Add the Metrics spreadsheet tab to the workbook
     detail_ws = workbook.add_worksheet('Jira Stories Detail')
@@ -816,7 +793,7 @@ def create_sprint_stories_column_layout(jira_stories_ws, cell_fmts: Type[CellFor
 
 
 # ==============================================================================
-def write_the_sprint_stories_to_ws(jira_data_ws, cell_fmts: Type[CellFormats], jira_stories: list[JiraStoryRec]) -> None:
+def write_the_sprint_stories_to_ws(jira_data_ws, cell_fmts: Type[CellFormats], jira_stories: list[FastStoryRec]) -> None:
 
     # ******************************************************************
     # Set Jira Data Table starting and ending cells.
@@ -825,9 +802,9 @@ def write_the_sprint_stories_to_ws(jira_data_ws, cell_fmts: Type[CellFormats], j
     jira_data_tbl = calc_table_starting_and_ending_cells(1, 'A', 'K', len(jira_stories), False)
     table_data = []
     for cur_story in jira_stories:
-        sprints = ';'.join([str(sprint) for sprint in cur_story.sprints])
-        new_row_data = [cur_story.key,
-                        cur_story.type,
+        labels = '; '.join([str(label) for label in cur_story.labels])
+        new_row_data = [cur_story.issue_key,
+                        cur_story.issue_type,
                         cur_story.summary,
                         cur_story.status,
                         cur_story.assignee,
@@ -835,8 +812,8 @@ def write_the_sprint_stories_to_ws(jira_data_ws, cell_fmts: Type[CellFormats], j
                         cur_story.priority,
                         cur_story.points,
                         cur_story.created.strftime("%m/%d/%Y, %H:%M:%S"),
-                        ';'.join([str(sprint) for sprint in cur_story.sprints]),  # list comprehension to convert list
-                        cur_story.labels]
+                        '; '.join([str(sprint) for sprint in cur_story.sprints]),  # convert list of sprints to string
+                        '; '.join([str(label) for label in cur_story.labels])]  # convert list of labels to string
         table_data.append(new_row_data)
 
     jira_data_ws.add_table(jira_data_tbl,
@@ -866,7 +843,7 @@ def write_the_sprint_stories_to_ws(jira_data_ws, cell_fmts: Type[CellFormats], j
 # * Main
 # ******************************************************************************
 # ******************************************************************************
-def main():
+def create_sprint_report():
 
     print('\nBegin Create FAST Sprint Report')
     input_data = get_input_data()
@@ -881,4 +858,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    create_sprint_report()
