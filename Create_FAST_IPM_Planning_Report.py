@@ -21,8 +21,9 @@ import xlsxwriter
 
 # SGM Shared Module imports
 from kclFastSharedDataClasses import *
-from kclGetFastTeams import FASTTeams
-from kclGetFastSprints import FASTSprints
+from kclGetFastInfo import FASTInfoDB, SprintRec, TeamRec, TeamMemberRec
+# from kclGetFastTeams import FASTTeams
+# from kclGetFastSprints import FASTSprints
 from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 
@@ -31,15 +32,6 @@ from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 # * Class Declarations
 # ******************************************************************************
 # ******************************************************************************
-
-@dataclass
-class InputData:
-    sprint_info: SprintRec = None
-    team_info: FASTTeams = None
-    prev_sprint: str = ''
-    fast_teams: list[TeamRec] = field(default_factory=list)
-    jira_stories: FastStoryData = None
-    success: bool = False
 
 
 @dataclass
@@ -75,6 +67,17 @@ class IpmPlanningSS:
         self.assignee_data: list = []
 
 
+@dataclass
+class InputData:
+    fast_info_db: FASTInfoDB = None
+    sprint_info: SprintRec = None
+    team_info: FASTInfoDB = None
+    prev_sprint: str = ''
+    fast_teams: list[TeamRec] = field(default_factory=list)
+    jira_stories: FastStoryData = None
+    success: bool = False
+
+
 # ==============================================================================
 # ==============================================================================
 # * Functions
@@ -92,15 +95,16 @@ def get_input_data():
 
     print('\n  Begin Getting Input Data')
 
-    # Get Fast Team info, Teams and Members from the FastTeamInfo.csv spreadsheet
-    input_data.team_info = FASTTeams(Path.cwd())
-    if input_data.team_info is not None:
-        input_data.sprint_info = get_sprint_info(sprint_to_process)
+    # Get Fast Team info, Teams and Members from the FastInfo.db sqlite database
+    # input_data.team_info = FASTTeams(Path.cwd())
+    input_data.fast_info_db = FASTInfoDB(Path.cwd())
+    if input_data.fast_info_db is not None:
+        input_data.sprint_info = input_data.fast_info_db.get_sprint_info(sprint_to_process)
         if input_data.sprint_info is not None:
             input_data.prev_sprint = get_prev_sprint_name(sprint_to_process)
             # Get the FAST Jira Story data for the sprint being processed
             jql_query = create_jql_query(input_data.sprint_info.name[5:])
-            input_data.jira_stories = FastStoryData(JIRA_USER, JIRA_TOKEN, JIRA_OPTIONS, jql_query).stories
+            input_data.jira_stories = FastStoryData(jql_query).stories
             if input_data.jira_stories is not None:
                 input_data.success = True
                 print('  Success Getting Input Data')
@@ -115,16 +119,16 @@ def get_input_data():
 
 
 # ==============================================================================
-def get_sprint_info(sprint_to_process: str) -> SprintRec:
-    # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
-    fast_sprints_info = FASTSprints(Path.cwd())
-    if fast_sprints_info is not None:
-        sprint_info = fast_sprints_info.get_sprint_info(sprint_to_process)
-    else:
-        sprint_info = None
-    return sprint_info
-
-
+# def get_sprint_info(sprint_to_process: str) -> SprintRec:
+#     # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
+#     fast_sprints_info = FASTSprints(Path.cwd())
+#     if fast_sprints_info is not None:
+#         sprint_info = fast_sprints_info.get_sprint_info(sprint_to_process)
+#     else:
+#         sprint_info = None
+#     return sprint_info
+#
+#
 # ==============================================================================
 def get_prev_sprint_name(sprint_to_process: str) -> str:
     sprint_num = int(sprint_to_process[12:])
@@ -239,7 +243,7 @@ def create_sprint_report_spreadsheet(stories_by_assignee: list[AssigneesRec], in
     ipm_planning_ss = create_ss_workbook_and_formats(input_data.sprint_info.name)
 
     # change order of assignee's in list to move high priorty assignee's to front of list
-    ipm_planning_ss.assignee_data = update_order_of_assignees(stories_by_assignee, input_data.team_info)
+    ipm_planning_ss.assignee_data = update_order_of_assignees(stories_by_assignee, input_data.fast_info_db)
 
     # Setup the All Assignees worksheet tab to hold the totals by Assignee
     ipm_planning_ss.totals_ws = ipm_planning_ss.workbook.add_worksheet('All Assignees')
@@ -396,7 +400,7 @@ def calc_table_starting_and_ending_cells(top_row: int, left_col, right_col, num_
 
 
 # ==============================================================================
-def update_order_of_assignees(stories_by_assignee: list[AssigneesRec], fast_teams_info: FASTTeams) -> list[AssigneesRec]:
+def update_order_of_assignees(stories_by_assignee: list[AssigneesRec], fast_teams_info: FASTInfoDB) -> list[AssigneesRec]:
 
     updated_assignee_list = []
     # Find the high priority assignee's in the stories_by_assignee list so they can be moved to front
@@ -404,7 +408,7 @@ def update_order_of_assignees(stories_by_assignee: list[AssigneesRec], fast_team
     high_priority_list = []
     normal_priority_list = []
     for cur_assignee in stories_by_assignee:
-        assignee_team = fast_teams_info.get_team_of_member(cur_assignee.assignee)
+        assignee_team = fast_teams_info.get_assignee_team(cur_assignee.assignee)
         match assignee_team:
             case 'Verisk':
                 high_priority_list.append(cur_assignee)

@@ -35,7 +35,7 @@ class InputData:
     jql_query: str = ''
     report_type: str = ''
     output_filename: str = ''
-    letter_info: list[CsLetterRec] = None
+    letter_info: GetCsvLetterData = None
     sprint_to_process: str = ''
     team_info: list[TeamRec] = None
     jira_stories: FastStoryData = None
@@ -118,7 +118,7 @@ def get_input_data():
         input_data.jira_stories = FastStoryData(input_data.jql_query).stories
         if input_data.jira_stories is not None:
             input_data.success = True
-            print('   Success Getting Input Data')
+            print(' Success Getting Input Data')
         else:
             print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
     else:
@@ -200,17 +200,25 @@ def get_letter_report_to_create(input_data: InputData) -> None:
         report_to_create = get_report_to_launch()
         match report_to_create:
             case 1:
-                input_data.jql_query = CS_LETTER_DATA_JQL
+                input_data.jql_query = 'project = "FAST" AND ' \
+                     r'summary ~ "\"CS Letter:\"" AND ' \
+                     r'Type in (Bug, Story, Task, Sub-task) AND ' \
+                     r'Status in (Done, UAT, QA, Development, "Selected for Development", "Tech Grooming", "Business Grooming", Backlog) ' \
+                     r'ORDER BY Key'
                 input_data.report_type = 'CS_Letters'
                 input_data.output_filename = 'CS Letter Report.xlsx'
                 done = True
             case 2:
-                input_data.jql_query = CLAIM_LETTER_DATA_JQL
+                input_data.jql_query = 'project = "FAST" AND ' \
+                     r'summary ~ "\"Claim Letter:\"" AND ' \
+                     r'Type in (Bug, Story, Task, Sub-task) AND ' \
+                     r'Status in (Done, UAT, QA, Development, "Selected for Development", "Tech Grooming", "Business Grooming", Backlog) ' \
+                     r'ORDER BY Key'
                 input_data.report_type = 'Claim_Letters'
                 input_data.output_filename = 'Claim Letter Report.xlsx'
                 done = True
             case 3:
-                input_data.jql_query = CORRESPONDENCE_PROD_ISSUE
+                input_data.jql_query = 'project = FAST AND labels = Correspondence_Prod_Issue order by Sprint'
                 input_data.report_type = 'Correspondence_Letters'
                 input_data.output_filename = 'Correspondence Letter Prod Issue Report.xlsx'
                 done = True
@@ -220,7 +228,7 @@ def get_letter_report_to_create(input_data: InputData) -> None:
 
 # ==============================================================================
 def process_cs_letter_data(input_data: InputData) -> list[LetterData]:
-    print('\n   Begin Processing CS Letter Data')
+    print('\nBegin Processing Letter Data')
     letter_data: list[LetterData] = []
     for cur_jira_story in input_data.jira_stories:
         new_letter_story = create_letter_story_from_jira_story(cur_jira_story, input_data.report_type)
@@ -250,6 +258,7 @@ def process_cs_letter_data(input_data: InputData) -> list[LetterData]:
                 new_letter_type.points_done = new_letter_story.points
             new_letter_type.jira_stories.append(new_letter_story)
             letter_data.append(new_letter_type)
+    print('Finished Processing Letter Data')
 
     return letter_data
 
@@ -290,7 +299,7 @@ def create_letter_story_from_jira_story(jira_story: FastStoryRec, report_type) -
 
 # ==============================================================================
 def create_letter_report_spreadsheet(letter_data: list[LetterData], report_filename: str, sprint_name: str) -> None:
-    print('\n   Creating CS Letter Report spreadsheet')
+    print('\nCreating Letter Report spreadsheet')
 
     # create the spreadsheet workbook
     relative_path = 'Output files/' + date.today().strftime("%y-%m-%d") + ' ' + report_filename
@@ -338,7 +347,7 @@ def create_letter_report_spreadsheet(letter_data: list[LetterData], report_filen
     # write_the_cur_letter_grand_totals_row(letter_data, next_row_all_letters, letters_ws, cell_fmts)
 
     workbook.close()
-    print('   Completed Letter Report Spreadsheet')
+    print('Completed Letter Report Spreadsheet')
 
     return None
 

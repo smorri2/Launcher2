@@ -22,8 +22,9 @@ import xlsxwriter
 
 # SGM Shared Module imports
 from kclFastSharedDataClasses import *
-from kclGetFastTeams import FASTTeams
-from kclGetFastSprints import FASTSprints
+from kclGetFastInfo import FASTInfoDB, TeamRec, TeamMemberRec, SprintRec, ProgramIncrementRec
+# from kclGetFastTeams import FASTTeams
+# from kclGetFastSprints import FASTSprints
 from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 # ******************************************************************************
@@ -127,11 +128,11 @@ def get_input_data():
     print('\n  Begin Getting Input Data ')
 
     # Get Fast Team info, Teams and Members from the FastTeamInfo.csv spreadsheet
-    fast_teams_info = FASTTeams(Path.cwd())
-    if fast_teams_info is not None:
-        input_data.team_info = fast_teams_info.teams
+    fast_info_db = FASTInfoDB(Path.cwd())
+    if fast_info_db is not None:
+        input_data.team_info = fast_info_db.teams
         # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
-        input_data.sprint_info = FASTSprints(Path.cwd())
+        input_data.sprint_info = FASTInfoDB(Path.cwd())
         if input_data.sprint_info is not None:
             input_data.sprint_info = input_data.sprint_info.get_sprint_info(sprint_to_process)
             # Get the FAST Jira Story data for the sprint being processed

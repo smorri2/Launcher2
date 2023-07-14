@@ -25,8 +25,7 @@ import xlsxwriter
 
 # SGM Shared Module imports
 from kclFastSharedDataClasses import *
-from kclGetFastTeams import FASTTeams
-from kclGetFastSprints import FASTSprints
+from kclGetFastInfo import FASTInfoDB, SprintRec, TeamRec, TeamMemberRec
 from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 
@@ -35,14 +34,6 @@ from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 # * Class Declarations
 # ******************************************************************************
 # ******************************************************************************
-
-@dataclass()
-class InputData:
-    sprint_info: SprintRec = None
-    team_info: list[TeamRec] = None
-    jira_stories: FastStoryData = None
-    success: bool = False
-
 
 @dataclass
 class MetricsRowData:
@@ -104,6 +95,14 @@ class CellFormats:
     table_label_fmt = None
 
 
+@dataclass()
+class InputData:
+    sprint_info: SprintRec = None
+    team_info: list[TeamRec] = None
+    jira_stories: FastStoryData = None
+    success: bool = False
+
+
 # ******************************************************************************
 # ******************************************************************************
 # # * Functions
@@ -120,14 +119,12 @@ def get_input_data():
 
     print('\n  Begin Getting Input Data ')
 
-    # Get Fast Team info, Teams and Members from the FastTeamInfo.csv spreadsheet
-    fast_teams_info = FASTTeams(Path.cwd())
-    if fast_teams_info is not None:
-        input_data.team_info = fast_teams_info.teams
-        # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
-        fast_sprint_info = FASTSprints(Path.cwd())
-        if fast_sprint_info is not None:
-            input_data.sprint_info = fast_sprint_info.get_sprint_info(sprint_to_process)
+    # Get Fast Team info, Teams and Members from the FastInfo.db sqlite database
+    fast_info_db = FASTInfoDB(Path.cwd())
+    if fast_info_db is not None:
+        input_data.team_info = fast_info_db.get_fast_teams()
+        if input_data.team_info:
+            input_data.sprint_info = fast_info_db.get_sprint_info(sprint_to_process)
             # Get the FAST Jira Story data for the sprint being processed
             jql_query = create_jql_query(input_data.sprint_info.name[5:])
             input_data.jira_stories = FastStoryData(jql_query).stories
@@ -607,7 +604,10 @@ def write_the_team_metrics_to_ws(metrics_ws, cell_fmts: Type[CellFormats], teams
         # Create the table data
         table_data = []
         for cur_team in teams:
-            team_percentage = cur_team.points/ total_team_points
+            if total_team_points > 0:
+                team_percentage = cur_team.points/ total_team_points
+            else:
+                team_percentage = 0.0
             new_team = [cur_team.label, cur_team.num_stories, cur_team.points, team_percentage]
             table_data.append(new_team)
 
