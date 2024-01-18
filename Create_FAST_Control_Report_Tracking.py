@@ -21,7 +21,7 @@ import xlsxwriter
 
 # SGM Shared Module imports
 from kclFastSharedDataClasses import *
-from kclGetCsvReportNames import FastControlReportData
+from kclGetFastInfo import FASTInfoDB
 from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 
@@ -62,6 +62,7 @@ class CellFormats:
     left_bold_fmt = None
     left_bold_separator_fmt = None
     left_done_separator_fmt = None
+    left_warning_separator_fmt = None
     header_left_fmt = None
     header_center_fmt = None
     right_fmt = None
@@ -92,20 +93,22 @@ def get_input_data():
 
     # Get FAST Control Report names from FastControlReports.csv spreadsheet
     print('\n  Get FAST Control Report Names from CSV file')
-    input_data.report_names = FastControlReportData(Path.cwd()).reports
-    if input_data.report_names is not None:
-        # input_data.sprint_info = fast_sprint_info.get_sprint_info(sprint_to_process)
-        # Get the FAST Jira Story data for the sprint being processed
-        input_data.jql_query = 'project = "FAST" and "Epic Link" = "FAST Control Reports" Order BY created DESC'
-        input_data.jira_stories = FastStoryData(input_data.jql_query).stories
-        if input_data.jira_stories is not None:
-            input_data.output_filename = 'Control Reports Tracking.xlsx'
-            input_data.success = True
-            print('   Success Getting Input Data')
+    fast_info_db = FASTInfoDB(Path.cwd())
+    if fast_info_db is not None:
+        input_data.report_names = fast_info_db.get_control_report_names()
+        # input_data.report_names = FastControlReportData(Path.cwd()).reports
+        if input_data.report_names:
+            # Get the FAST Jira Story data for the sprint being processed
+            input_data.jql_query = 'project = "FAST" and "Epic Link" = "FAST Control Reports" Order BY created DESC'
+            input_data.jira_stories = FastStoryData(input_data.jql_query).stories
+            if input_data.jira_stories is not None:
+                input_data.output_filename = 'Control Reports Tracking.xlsx'
+                input_data.success = True
+                print('   Success Getting Input Data')
+            else:
+                print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
         else:
-            print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
-    else:
-        print('   *** Error getting Sprint Info from FastSprintInfo.csv')
+            print('   *** Error getting Sprint Info from FastSprintInfo.csv')
 
     return input_data
 
@@ -145,6 +148,11 @@ def get_sprint_to_process() -> str:
 def process_reports_story_data(input_data: InputData) -> list[ReportsData]:
     print('\n   Begin Processing Control Reports Story Data')
     reports: list[ReportsData] = []
+    # Build the list of ReportsData recs by creating a ReportsData rec for each report name
+    for cur_report_name in input_data.report_names:
+        new_report_data_rec = ReportsData(cur_report_name, 0, 0, False, [])
+        reports.append(new_report_data_rec)
+
     for cur_jira_story in input_data.jira_stories:
         jira_story_report_name = get_report_name(cur_jira_story.summary, input_data.report_names)
         report_found = False
@@ -185,7 +193,7 @@ def get_report_name(story_summary: str, report_names: list[str]) -> str:
 
 # ==============================================================================
 def create_reports_tracking_spreadsheet(reports: list[ReportsData], report_filename: str, sprint_name: str) -> None:
-    print('\n   Creating CS Letter Report spreadsheet')
+    print('\n   Creating FAST Control Reports Tracking spreadsheet')
 
     # create the spreadsheet workbook
     relative_path = 'Output files/' + date.today().strftime("%y-%m-%d") + ' ' + report_filename
@@ -194,23 +202,24 @@ def create_reports_tracking_spreadsheet(reports: list[ReportsData], report_filen
     # create the cell formatting options for the workbook
     cell_fmts = create_cell_formatting_options(workbook)
 
-    #  Add the CS Letters worksheet to the workbook
+    #  Add the Reports Detail worksheet to the workbook
     reports_ws = workbook.add_worksheet('Reports Detail')
     reports_ws.freeze_panes(1, 0)
     # Set the column widths and default cell formatting for the CS Letters worksheet
     create_report_stories_column_layout(reports_ws, cell_fmts)
 
-    #  Add the Current Sprint Letters worksheet to the workbook
+    #  Add the Current Sprint Reports worksheet to the workbook
     cur_sprint_ws = workbook.add_worksheet('Current Sprint Reports')
     cur_sprint_ws.freeze_panes(1, 0)
     # Set the column widths and default cell formatting for the CS Letters worksheet
     create_report_stories_column_layout(cur_sprint_ws, cell_fmts)
 
-    # Sort the letter data by letter ID so that the report shows status in alphabetical order to make
+    # Sort the Control Report data by report name so that the report shows status in alphabetical order to make
     # it easier to find specific letters on the report
-    reports.sort(key=lambda report_rec: report_rec.report_name)
+    reports = sort_control_report_data_by_completion_percentage_and_letter_id(reports)
 
-    # Write the CS Letters Detail worksheet
+
+    # Write the Control Reports worksheet
     next_row_all_reports = write_header_row(reports_ws, cell_fmts)
     for cur_report_type in reports:
         next_row_all_reports = write_the_report_description_row_to_ws(cur_report_type, next_row_all_reports, reports_ws,
@@ -235,9 +244,31 @@ def create_reports_tracking_spreadsheet(reports: list[ReportsData], report_filen
                                                                         cur_sprint_ws, cell_fmts)
 
     workbook.close()
-    print('   Completed Reports Tracking Spreadsheet')
-#
+    print('   Completed FAST Control Reports Tracking Spreadsheet')
     return None
+
+
+# ==============================================================================
+def sort_control_report_data_by_completion_percentage_and_letter_id(reports: list[ReportsData]) -> list[ReportsData]:
+    done_reports = []
+    in_dev_reports = []
+
+    for cur_report_type in reports:
+        if cur_report_type.points_total == cur_report_type.points_done:
+            done_reports.append(cur_report_type)
+        else:
+            in_dev_reports.append(cur_report_type)
+
+    # sort the done reports by report name
+    done_reports.sort(key=lambda report_data_rec: report_data_rec.report_name)
+
+    # sort the in development reports by report name
+    in_dev_reports.sort(key=lambda report_data_rec: report_data_rec.report_name)
+
+    # Concatenate the done letters after the in development letters
+    sorted_report_data = in_dev_reports + done_reports
+
+    return sorted_report_data
 
 
 # ==============================================================================
@@ -254,6 +285,8 @@ def create_cell_formatting_options(workbook) -> Type[CellFormats]:
         {'align': 'left', 'bold': 1, 'indent': 1, 'bg_color': '#DA9694'})
     cell_fmt.left_done_separator_fmt = workbook.add_format(
         {'align': 'left', 'bold': 1, 'indent': 1, 'bg_color': '#C4D79B'})
+    cell_fmt.left_warning_separator_fmt = workbook.add_format(
+        {'align': 'left', 'bold': 1, 'indent': 1, 'bg_color': '#FF0000'})
     cell_fmt.header_left_fmt = workbook.add_format({'align': 'left', 'bold': 1, 'indent': 1, 'font_size': 12})
     cell_fmt.header_center_fmt = workbook.add_format(
         {'align': 'center', 'bold': 1, 'font_size': 12, 'bg_color': '#B8CCE4'})
@@ -306,10 +339,14 @@ def write_header_row(ws, cell_fmts: Type[CellFormats]) -> int:
 
 # ==============================================================================
 def write_the_report_description_row_to_ws(reports: ReportsData, cur_row: int, ws, cell_fmts: Type[CellFormats]):
-    if reports.points_done == reports.points_total:
-        separator_fmt = cell_fmts.left_done_separator_fmt
+    if len(reports.stories) > 0:
+        if reports.points_done == reports.points_total:
+            separator_fmt = cell_fmts.left_done_separator_fmt
+        else:
+            separator_fmt = cell_fmts.left_bold_separator_fmt
     else:
-        separator_fmt = cell_fmts.left_bold_separator_fmt
+        separator_fmt = cell_fmts.left_warning_separator_fmt
+
     ws.write(cur_row, 0, reports.report_name, separator_fmt)
     ws.write(cur_row, 1, '', separator_fmt)
     ws.write(cur_row, 2, '', separator_fmt)
@@ -333,22 +370,29 @@ def write_the_report_stories_for_report_to_ws(report_stories: list[FastStoryRec]
                                               cur_row: int,
                                               ws,
                                               cell_fmts: Type[CellFormats]) -> int:
-    for cur_report_story in report_stories:
-        ws.write(cur_row, 1, cur_report_story.issue_key, cell_fmts.left_fmt)
-        ws.write(cur_row, 2, cur_report_story.summary, cell_fmts.left_fmt)
-        status_fmt = determine_story_status_format(cur_report_story.status, cell_fmts)
-        ws.write(cur_row, 3, cur_report_story.status, status_fmt)
-        sprint_fmt = determine_story_sprint_format(cur_report_story.sprints, sprint_name, cur_report_story.status,
-                                                   cell_fmts)
-        if cur_report_story.sprints:
-            ws.write(cur_row, 4, cur_report_story.sprints[0], sprint_fmt)
-        blocks = ', '.join(cur_report_story.is_blocked_by)
-        ws.write(cur_row, 5, blocks, cell_fmts.left_fmt)
-        ws.write(cur_row, 6, cur_report_story.assignee, cell_fmts.left_fmt)
-        ws.write(cur_row, 7, cur_report_story.test_assignee, cell_fmts.left_fmt)
-        ws.write(cur_row, 8, cur_report_story.points, cell_fmts.right_fmt)
-        if cur_report_story.status == 'Done':
-            ws.write(cur_row, 9, cur_report_story.points, cell_fmts.right_fmt)
+    if len(report_stories) > 0:
+
+        report_stories.sort(key=lambda story_rec: story_rec.issue_key)
+
+        for cur_report_story in report_stories:
+            ws.write(cur_row, 1, cur_report_story.issue_key, cell_fmts.left_fmt)
+            ws.write(cur_row, 2, cur_report_story.summary, cell_fmts.left_fmt)
+            status_fmt = determine_story_status_format(cur_report_story.status, cell_fmts)
+            ws.write(cur_row, 3, cur_report_story.status, status_fmt)
+            sprint_fmt = determine_story_sprint_format(cur_report_story.sprints, sprint_name, cur_report_story.status,
+                                                       cell_fmts)
+            if cur_report_story.sprints:
+                ws.write(cur_row, 4, cur_report_story.sprints[0], sprint_fmt)
+            blocks = ', '.join(cur_report_story.is_blocked_by)
+            ws.write(cur_row, 5, blocks, cell_fmts.left_fmt)
+            ws.write(cur_row, 6, cur_report_story.assignee, cell_fmts.left_fmt)
+            ws.write(cur_row, 7, cur_report_story.test_assignee, cell_fmts.left_fmt)
+            ws.write(cur_row, 8, cur_report_story.points, cell_fmts.right_fmt)
+            if cur_report_story.status == 'Done':
+                ws.write(cur_row, 9, cur_report_story.points, cell_fmts.right_fmt)
+            cur_row += 1
+    else:
+        ws.write(cur_row, 1, "No FAST Stories found for this Report in Jira", cell_fmts.left_fmt)
         cur_row += 1
 
     next_row = cur_row + 1

@@ -19,7 +19,6 @@ from dotenv import load_dotenv
 from typing import Type
 import xlsxwriter
 
-
 # local application imports
 
 
@@ -114,75 +113,48 @@ def get_input_data():
 
     input_data = InputData()
 
-    # get the Sprint to process from the user via console input
-    sprint_to_process = get_sprint_to_process()
-
     print('\n  Begin Getting Input Data ')
 
-    # Get Fast Team info, Teams and Members from the FastInfo.db sqlite database
+    # Get Fast Team info, Teams and Members from the FastTeamInfo.csv spreadsheet
     fast_info_db = FASTInfoDB(Path.cwd())
     if fast_info_db is not None:
-        input_data.team_info = fast_info_db.get_fast_teams()
-        if input_data.team_info:
-            input_data.sprint_info = fast_info_db.get_sprint_info(sprint_to_process)
-            # Get the FAST Jira Story data for the sprint being processed
-            jql_query = create_jql_query(input_data.sprint_info.name[5:])
-            input_data.jira_stories = FastStoryData(jql_query).stories
-            if input_data.jira_stories is not None:
-                input_data.success = True
-                print('   Success Getting Input Data')
+        # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
+        input_data.sprint_info = fast_info_db.request_sprint_to_report_on_return_sprint_info()
+        if input_data.sprint_info is not None:
+            # Get FAST Teams data, ie Team Names and Team Members
+            input_data.team_info = fast_info_db.get_fast_teams()
+            if input_data.team_info is not None:
+                # Get the FAST Jira Story data for the sprint being processed
+                jql_query = create_jql_query(input_data.sprint_info.name[5:])
+                input_data.jira_stories = FastStoryData(jql_query).stories
+                if input_data.jira_stories is not None:
+                    input_data.success = True
+                    print('  Success Getting Input Data')
+                else:
+                    print('   *** Error getting FAST Story Data using Jira API')
             else:
-                print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
+                print('   *** Error getting Team Info from FastInfo.db')
         else:
-            print('   *** Error getting Sprint Info from FastSprintInfo.csv')
+            print('   *** Error getting Sprint Info from FastInfo.db')
     else:
-        print('   *** Error getting Team Info from FastTeamInfo.csv')
+        print('   *** Error accessing FastInfo.db')
 
     return input_data
 
 
 # ==============================================================================
-def get_sprint_to_process() -> str:
-    sprint_to_process: str = ''
-    valid_input: bool = False
-
-    debug: bool = False
-    if not debug:
-        while not valid_input:
-            print('\n')
-            print('   ************************************************')
-            print('   **                                           ***')
-            print('   **    Enter Sprint Number to Report On       ***')
-            print('   **                                           ***')
-            print('   ************************************************')
-
-            user_input = input('\n   Enter Sprint Number to process (two digits only) ==> ')
-            if user_input.isdecimal():  # Verify that the user input was a number
-                sprint_num = int(user_input)
-                if 39 < sprint_num < 100:
-                    sprint_to_process = '2023 FASTR1i' + str(sprint_num)
-                    valid_input = True
-                else:
-                    print('\n\n   Invalid Sprint Number, valid Sprint Numbers are between 40 & 99 inclusive')
-            else:
-                print('\n\n   Invalid option Selected, enter two digit sprint number only')
-    else:  # When debugging hard code the sprint name to avoid having to get input from console
-        sprint_to_process = '2023 FASTR1i69'
-
-    return sprint_to_process
-
-
-# ==============================================================================
 def create_jql_query(sprint_name) -> str:
+
     project = 'project = "FAST" AND '
     sprint = 'Sprint = ' + sprint_name + ' AND '
-    story_type = 'Type in (Bug, Story, Task, Sub-task) AND '
+    story_type = 'Type in (Bug, Story, Task) AND '
     status = 'Status in (Done, UAT, QA, Development, "Selected for Development", "Tech Grooming", ' \
              '"Business Grooming", Backlog) '
     order_by = 'ORDER BY Key'
     jql_query = project + sprint + story_type + status + order_by
 
     return jql_query
+
 
 # ==============================================================================
 def build_sprint_metrics(input_data: InputData) -> MetricsData:

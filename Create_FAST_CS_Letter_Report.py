@@ -20,7 +20,7 @@ import xlsxwriter
 
 # SGM Shared Module imports
 from kclFastSharedDataClasses import *
-from kclGetCsvLettersData import GetCsvLetterData, CsLetterRec
+from kclGetFastInfo import FASTInfoDB
 from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 
@@ -35,11 +35,13 @@ class InputData:
     jql_query: str = ''
     report_type: str = ''
     output_filename: str = ''
-    letter_info: GetCsvLetterData = None
+    fast_info_db: FASTInfoDB = None
+    # letter_info: FASTInfoDB = None
     sprint_to_process: str = ''
     team_info: list[TeamRec] = None
     jira_stories: FastStoryData = None
     success: bool = False
+    exit: bool = False
 
 
 @dataclass
@@ -100,29 +102,30 @@ class CellFormats:
 # ******************************************************************************
 
 # ==============================================================================
-def get_input_data():
+def get_input_data(sprint_to_process: str):
     print('\n  Begin Getting Input Data ')
 
     input_data = InputData()
+    # get the Sprint to process from the user via console input
+    input_data.sprint_to_process = sprint_to_process
 
     # get the type of letter to report on, CS Letter or Claim Letter
     get_letter_report_to_create(input_data)
-    # get the Sprint to process from the user via console input
-    input_data.sprint_to_process = get_sprint_to_process()
-    # Get Get Letters Data, Letter ID, Letter Description from the FastSprintInfo.csv spreadsheet
-    print('\n  Getting Letter Codes from CSV file')
-    input_data.letter_info = GetCsvLetterData(Path.cwd())
-    if input_data.letter_info is not None:
-        # input_data.sprint_info = fast_sprint_info.get_sprint_info(sprint_to_process)
-        # Get the FAST Jira Story data for the sprint being processed
-        input_data.jira_stories = FastStoryData(input_data.jql_query).stories
-        if input_data.jira_stories is not None:
-            input_data.success = True
-            print(' Success Getting Input Data')
+    if not input_data.exit:
+        # Get Letters Data, Letter ID, Letter Description from the FastSprintInfo.csv spreadsheet
+        print('\n  Getting Letter Codes from CSV file')
+        input_data.fast_info_db = FASTInfoDB(Path.cwd())
+        if input_data.fast_info_db is not None:
+            # input_data.sprint_info = fast_sprint_info.get_sprint_info(sprint_to_process)
+            # Get the FAST Jira Story data for the sprint being processed
+            input_data.jira_stories = FastStoryData(input_data.jql_query).stories
+            if input_data.jira_stories is not None:
+                input_data.success = True
+                print(' Success Getting Input Data')
+            else:
+                print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
         else:
-            print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
-    else:
-        print('   *** Error getting Sprint Info from FastSprintInfo.csv')
+            print('   *** Error getting Sprint Info from FastSprintInfo.csv')
 
     return input_data
 
@@ -172,6 +175,8 @@ def get_report_to_launch() -> int:
         print('   **         1 - Create FAST CS Letters Report                   ***')
         print('   **         2 - Create FAST Claim Letters Report                ***')
         print('   **         3 - Correspondence Prod Issue Report                ***')
+        print('   **         4 - Create New Business Letters Report              ***')
+        print('   **         0 - Exit                                            ***')
         print('   **                                                             ***')
         print('   ******************************************************************')
 
@@ -184,6 +189,12 @@ def get_report_to_launch() -> int:
                 app_to_launch = int(user_input)
                 valid_input = True
             case '3':
+                app_to_launch = int(user_input)
+                valid_input = True
+            case '4':
+                app_to_launch = int(user_input)
+                valid_input = True
+            case '0':
                 app_to_launch = int(user_input)
                 valid_input = True
             case _:
@@ -222,6 +233,18 @@ def get_letter_report_to_create(input_data: InputData) -> None:
                 input_data.report_type = 'Correspondence_Letters'
                 input_data.output_filename = 'Correspondence Letter Prod Issue Report.xlsx'
                 done = True
+            case 4:
+                input_data.jql_query = 'project = "FAST" AND ' \
+                     r'summary ~ "\"NB Letter:\"" AND ' \
+                     r'Type in (Bug, Story, Task, Sub-task) AND ' \
+                     r'Status in (Done, UAT, QA, Development, "Selected for Development", "Tech Grooming", "Business Grooming", Backlog) ' \
+                     r'ORDER BY Key'
+                input_data.report_type = 'NB_Letters'
+                input_data.output_filename = 'NB Letter Report.xlsx'
+                done = True
+            case 0:
+                input_data.exit = True
+                done = True
 
     return None
 
@@ -248,7 +271,7 @@ def process_cs_letter_data(input_data: InputData) -> list[LetterData]:
         if letter_type_found:
             pass
         else:
-            description = get_description_for_letter_type(new_letter_story.letter_id, input_data.letter_info)
+            description = get_description_for_letter_type(new_letter_story.letter_id, input_data.fast_info_db)
             new_letter_type = LetterData(new_letter_story.letter_id, description)
             new_letter_type.points_total = new_letter_story.points
             if cur_jira_story.sprints:
@@ -264,8 +287,8 @@ def process_cs_letter_data(input_data: InputData) -> list[LetterData]:
 
 
 # ==============================================================================
-def get_description_for_letter_type(letter_id: str, letter_info: GetCsvLetterData) -> str:
-    description = letter_info.get_letter_description(letter_id)
+def get_description_for_letter_type(letter_id: str, fast_info_db: FASTInfoDB) -> str:
+    description = fast_info_db.get_letter_description(letter_id)
     if description == '':
         description = 'Unknown Letter ID'
 
@@ -321,7 +344,8 @@ def create_letter_report_spreadsheet(letter_data: list[LetterData], report_filen
 
     # Sort the letter data by letter ID so that the report shows status in alphabetical order to make
     # it easier to find specific letters on the report
-    letter_data.sort(key=lambda letter_data_rec: letter_data_rec.letter_id)
+    letter_data = sort_letter_data_by_completion_percentage_and_letter_id(letter_data)
+
 
     # Write the CS Letters Detail worksheet
     next_row_all_letters = write_header_row(letters_ws, cell_fmts)
@@ -352,6 +376,29 @@ def create_letter_report_spreadsheet(letter_data: list[LetterData], report_filen
     return None
 
 
+# ==============================================================================
+def sort_letter_data_by_completion_percentage_and_letter_id(letter_data: list[LetterData]) -> list[LetterData]:
+    sorted_letter_data = []
+    done_letters = []
+    in_dev_letters = []
+     
+    for cur_letter_type in letter_data:
+        if cur_letter_type.points_total == cur_letter_type.points_done:
+            done_letters.append(cur_letter_type)
+        else:
+            in_dev_letters.append(cur_letter_type)
+
+    # sort the done letters by letter id
+    done_letters.sort(key=lambda letter_data_rec: letter_data_rec.letter_id)
+    # sort the in development letters by letter id
+    in_dev_letters.sort(key=lambda letter_data_rec: letter_data_rec.letter_id)
+
+    # Concatenate the done letters after the in development letters
+    sorted_letter_data = in_dev_letters + done_letters
+     
+    return sorted_letter_data
+     
+     
 # ==============================================================================
 def create_cell_formatting_options(workbook) -> Type[CellFormats]:
     # create predefined cell_formats to be used for cells in the workbook
@@ -557,11 +604,20 @@ def write_the_cur_letter_grand_totals_row(letter_types: list[LetterData], cur_ro
 # ******************************************************************************
 def create_cs_letter_report():
     print('\nBegin Create CS Letter Report')
-    input_data = get_input_data()
-    if input_data.success:
-        letter_data = process_cs_letter_data(input_data)
-        if len(letter_data) > 0:
-            create_letter_report_spreadsheet(letter_data, input_data.output_filename, input_data.sprint_to_process)
+
+    # get the Sprint to process from the user via console input
+    sprint_to_process = get_sprint_to_process()
+
+    done = False
+    while not done:
+        input_data = get_input_data(sprint_to_process)
+        if input_data.exit:
+            done = True
+        else:
+            if input_data.success and not input_data.exit:
+                letter_data = process_cs_letter_data(input_data)
+                if len(letter_data) > 0:
+                    create_letter_report_spreadsheet(letter_data, input_data.output_filename, input_data.sprint_to_process)
 
     print('\nEnd Create CS Letter Report')
 

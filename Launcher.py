@@ -17,10 +17,12 @@ from Create_FAST_IPM_Planning_Report import create_fast_ipm_planning_spreadsheet
 from Create_FAST_Standup_Assignees_Spreadsheet import create_standup_assignees_spreadsheet
 from Create_FAST_Sprint_Report import create_sprint_report
 from Case_Status_true_up import case_status_true_up
-# from Create_PI_Planning_Metrics import create_pi_planning_metrics
 from Create_PI_Metrics import create_pi_planning_metrics
 from Create_FAST_CS_Letter_Report import create_cs_letter_report
 from Create_FAST_Control_Report_Tracking import create_fast_control_report_tracking
+from Plan_Program_Increment import plan_program_increment
+from Sprint_Story_Dependencies import sprint_story_dependencies
+
 
 # SGM Shared Module imports
 
@@ -55,6 +57,8 @@ def get_app_to_launch() -> int:
         print('   **         5 - Create PI Planning Metrics Spreadsheet          ***')
         print('   **         6 - Create CS Letter Report Spreadsheet             ***')
         print('   **         7 - Create Control Report Tracking Spreadsheet      ***')
+        print('   **         8 - Create Plan Program Increment Spreadsheet       ***')
+        print('   **         9 - Create Sprint Story Dependencies Spreadsheet    ***')
         print('   **         0 - Quit                                            ***')
         print('   **                                                             ***')
         print('   ******************************************************************')
@@ -80,6 +84,12 @@ def get_app_to_launch() -> int:
                 app_to_launch = int(user_input)
                 valid_input = True
             case '7':
+                app_to_launch = int(user_input)
+                valid_input = True
+            case '8':
+                app_to_launch = int(user_input)
+                valid_input = True
+            case '9':
                 app_to_launch = int(user_input)
                 valid_input = True
             case '0':
@@ -116,6 +126,10 @@ def main():
                 create_cs_letter_report()
             case 7:
                 create_fast_control_report_tracking()
+            case 8:
+                plan_program_increment()
+            case 9:
+                sprint_story_dependencies()
             case _:
                 pass
 

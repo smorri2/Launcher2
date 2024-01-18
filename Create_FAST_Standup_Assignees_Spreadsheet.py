@@ -9,12 +9,14 @@
 
 # Standard library imports
 from pathlib import Path
-# from dataclasses import dataclass
+from dataclasses import dataclass
 from typing import Type
+from time import sleep
 
 
 # Third party imports
 import xlsxwriter
+from tqdm import tqdm
 
 
 # local file imports
@@ -23,8 +25,6 @@ import xlsxwriter
 # SGM Shared Module imports
 from kclFastSharedDataClasses import *
 from kclGetFastInfo import FASTInfoDB, TeamRec, TeamMemberRec, SprintRec, ProgramIncrementRec
-# from kclGetFastTeams import FASTTeams
-# from kclGetFastSprints import FASTSprints
 from kclGetFastStoryDataJiraAPI import FastStoryData, FastStoryRec
 
 # ******************************************************************************
@@ -61,6 +61,8 @@ class AssigneeTeamsData:
     it_assignees: list[AssigneeDataRec] = field(default_factory=list)
     actuarial_assignees: list[AssigneeDataRec] = field(default_factory=list)
     verisk_assignees: list[AssigneeDataRec] = field(default_factory=list)
+    data_assignees: list[AssigneeDataRec] = field(default_factory=list)
+    platform_assignees: list[AssigneeDataRec] = field(default_factory=list)
 
 
 @dataclass
@@ -122,71 +124,40 @@ def get_input_data():
 
     input_data = InputData()
 
-    # get the Sprint to process from the user via console input
-    sprint_to_process = get_sprint_to_process()
-
     print('\n  Begin Getting Input Data ')
 
     # Get Fast Team info, Teams and Members from the FastTeamInfo.csv spreadsheet
     fast_info_db = FASTInfoDB(Path.cwd())
     if fast_info_db is not None:
-        input_data.team_info = fast_info_db.teams
         # Get FAST Sprint info, start date and end date, from the FastSprintInfo.csv spreadsheet
-        input_data.sprint_info = FASTInfoDB(Path.cwd())
+        input_data.sprint_info = fast_info_db.request_sprint_to_report_on_return_sprint_info()
         if input_data.sprint_info is not None:
-            input_data.sprint_info = input_data.sprint_info.get_sprint_info(sprint_to_process)
-            # Get the FAST Jira Story data for the sprint being processed
-            jql_query = create_jql_query(input_data.sprint_info.name[5:])
-            input_data.jira_stories = FastStoryData(jql_query).stories
-            if input_data.jira_stories is not None:
-                input_data.success = True
-                print('   Success Getting Input Data')
+            # Get FAST Teams data, ie Team Names and Team Members
+            input_data.team_info = fast_info_db.get_fast_teams()
+            if input_data.team_info is not None:
+                # Get the FAST Jira Story data for the sprint being processed
+                jql_query = create_jql_query(input_data.sprint_info.name[5:])
+                input_data.jira_stories = FastStoryData(jql_query).stories
+                if input_data.jira_stories is not None:
+                    input_data.success = True
+                    print('  Success Getting Input Data')
+                else:
+                    print('   *** Error getting FAST Story Data using Jira API')
             else:
-                print('   *** Error getting Sprint Info from SGM - Jira - FAST Sprint Data (Jira).csv')
+                print('   *** Error getting Team Info from FastInfo.db')
         else:
-            print('   *** Error getting Sprint Info from FastSprintInfo.csv')
+            print('   *** Error getting Sprint Info from FastInfo.db')
     else:
-        print('   *** Error getting Team Info from FastTeamInfo.csv')
+        print('   *** Error accessing FastInfo.db')
 
     return input_data
-
-
-# ==============================================================================
-def get_sprint_to_process() -> str:
-    sprint_to_process: str = ''
-    valid_input: bool = False
-
-    debug: bool = False
-    if not debug:
-        while not valid_input:
-            print('\n')
-            print('   ************************************************')
-            print('   **                                           ***')
-            print('   **    Enter Sprint Number to Report On       ***')
-            print('   **                                           ***')
-            print('   ************************************************')
-
-            user_input = input('\n   Enter Sprint Number to process (two digits only) ==> ')
-            if user_input.isdecimal():  # Verify that the user input was a number
-                sprint_num = int(user_input)
-                if 39 < sprint_num < 100:
-                    sprint_to_process = '2023 FASTR1i' + str(sprint_num)
-                    valid_input = True
-                else:
-                    print('\n\n   Invalid Sprint Number, valid Sprint Numbers are between 40 & 99 inclusive')
-            else:
-                print('\n\n   Invalid option Selected, enter two digit sprint number only')
-    else:  # When debugging hard code the sprint name to avoid having to get input from console
-        sprint_to_process = '2023 FASTR1i69'
-
-    return sprint_to_process
 
 
 # ==============================================================================
 def create_jql_query(sprint_name) -> str:
     project = 'project = "FAST" AND '
     sprint = 'Sprint = ' + sprint_name + ' AND '
-    story_type = 'Type in (Bug, Story, Task, Sub-task) AND '
+    story_type = 'Type in (Bug, Story, Task) AND '
     status = 'Status in (UAT, QA, Development, "Selected for Development", "Tech Grooming", "Business Grooming", ' \
              'Backlog) '
     order_by = 'ORDER BY Key'
@@ -203,10 +174,12 @@ def create_jql_query(sprint_name) -> str:
 
 
 # ==============================================================================
-def process_jira_stories(jira_stories: FastStoryData, teams_info: list[TeamRec]) -> AssigneeTeamsData:
+def process_jira_stories(jira_stories: list[FastStoryRec], teams_info: list[TeamRec]) -> AssigneeTeamsData:
 
-    print('   Begin Processing Assignee Stories')
     assignee_teams = AssigneeTeamsData()
+    # Set up the Progress bar display in the console, so you can see progress when converting data
+    pbar = tqdm(total=len(jira_stories), desc='  Processing Assignee stories ' + ' ', ncols=120, colour='BLUE',
+                bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}")
     for cur_jira_story in jira_stories:
         current_assignee = get_current_assignee(cur_jira_story)
         assignee_story_rec = AssigneeStoryRec(cur_jira_story, current_assignee)
@@ -218,13 +191,18 @@ def process_jira_stories(jira_stories: FastStoryData, teams_info: list[TeamRec])
             case 'App Systems':
                 update_assignee_data(assignee_teams.it_assignees, 'IT', assignee_story_rec)
             case 'Data Services':
-                update_assignee_data(assignee_teams.it_assignees, 'IT', assignee_story_rec)
+                update_assignee_data(assignee_teams.data_assignees, 'Data Services', assignee_story_rec)
             case 'FAST Support':
                 update_assignee_data(assignee_teams.it_assignees, 'IT', assignee_story_rec)
-            case 'Actuarial':
-                update_assignee_data(assignee_teams.actuarial_assignees, 'Actuarial', assignee_story_rec)
+            case 'Platform Engineering':
+                update_assignee_data(assignee_teams.platform_assignees, 'Platform Engineering', assignee_story_rec)
+            case 'iPACE':
+                update_assignee_data(assignee_teams.actuarial_assignees, 'iPACE', assignee_story_rec)
             case _:
                 update_assignee_data(assignee_teams.kcl_assignees, current_assignee, assignee_story_rec)
+        sleep(0.02)
+        pbar.update()  # Update the progress bar
+    pbar.close()  # close the progress bar because we are done showing progress
 
     return assignee_teams
 
@@ -277,7 +255,7 @@ def update_assignee_data(assignee_data: list[AssigneeDataRec], assignee_to_updat
 # ==============================================================================
 def create_fast_standup_assignees_ss(assignee_data: AssigneeTeamsData) -> None:
 
-    print('\n   Creating FAST Standup Assignee spreadsheet')
+    print('  Creating FAST Standup Assignee spreadsheet')
     assignee_ss = AssigneeSS()
     cur_date = datetime.now().strftime("%y-%m-%d")
     # create the spreadsheet workbook and formats for the spreadsheet
@@ -289,7 +267,7 @@ def create_fast_standup_assignees_ss(assignee_data: AssigneeTeamsData) -> None:
     assignee_data.actuarial_assignees.sort(key=lambda assignee_rec: assignee_rec.assignee_name)
     assignee_data.kcl_assignees.sort(key=lambda assignee_rec: assignee_rec.assignee_name)
     # Write the Verisk team members stories to the worksheet
-    print('      Writing Verisk Assignees to Spreadsheet')
+    print('    Writing Verisk Assignees to Spreadsheet')
     for cur_assignee in assignee_data.verisk_assignees:
         cur_assignee.stories.sort(key=lambda assignee_rec: assignee_rec.data.status, reverse=True)
         assignee_ws = assignee_ss.workbook.add_worksheet(cur_assignee.assignee_name)
@@ -298,15 +276,29 @@ def create_fast_standup_assignees_ss(assignee_data: AssigneeTeamsData) -> None:
     # Write an empty worksheet named Verisk Questions that will be used as a prompt to have KCLife team ask any
     # questions they have before we let Verisk team leave Standup meeting
     assignee_ws = assignee_ss.workbook.add_worksheet('Verisk Questions')
-    print('      Writing IT Assignees to Spreadsheet')
+    print('    Writing IT Assignees to Spreadsheet')
     for cur_assignee in assignee_data.it_assignees:
         cur_assignee.stories.sort(key=lambda assignee_rec: assignee_rec.cur_assignee)
         assignee_ws = assignee_ss.workbook.add_worksheet(cur_assignee.assignee_name)
         create_assignee_ws_column_layout(assignee_ws, cell_formats)
         write_assignee_stories_to_ws(assignee_ws, cell_formats, cur_assignee.stories)
-    # Write the Actuarial team members stories to the worksheet
-    print('      Writing Actuarial Assignees to Spreadsheet')
+    # Write the iPACE team members stories to the worksheet
+    print('    Writing iPACE Assignees to Spreadsheet')
     for cur_assignee in assignee_data.actuarial_assignees:
+        cur_assignee.stories.sort(key=lambda assignee_rec: assignee_rec.cur_assignee)
+        assignee_ws = assignee_ss.workbook.add_worksheet(cur_assignee.assignee_name)
+        create_assignee_ws_column_layout(assignee_ws, cell_formats)
+        write_assignee_stories_to_ws(assignee_ws, cell_formats, cur_assignee.stories)
+    # Write the Data Services team members stories to the worksheet
+    print('    Writing Data Services Assignees to Spreadsheet')
+    for cur_assignee in assignee_data.data_assignees:
+        cur_assignee.stories.sort(key=lambda assignee_rec: assignee_rec.cur_assignee)
+        assignee_ws = assignee_ss.workbook.add_worksheet(cur_assignee.assignee_name)
+        create_assignee_ws_column_layout(assignee_ws, cell_formats)
+        write_assignee_stories_to_ws(assignee_ws, cell_formats, cur_assignee.stories)
+    # Write the Platform Engineering team members stories to the worksheet
+    print('    Writing Platform Engineering Assignees to Spreadsheet')
+    for cur_assignee in assignee_data.platform_assignees:
         cur_assignee.stories.sort(key=lambda assignee_rec: assignee_rec.cur_assignee)
         assignee_ws = assignee_ss.workbook.add_worksheet(cur_assignee.assignee_name)
         create_assignee_ws_column_layout(assignee_ws, cell_formats)
@@ -319,7 +311,7 @@ def create_fast_standup_assignees_ss(assignee_data: AssigneeTeamsData) -> None:
         write_assignee_stories_to_ws(assignee_ws, cell_formats, cur_assignee.stories)
 
     assignee_ss.workbook.close()
-    print('   Done creating FAST Standup Assignee spreadsheet')
+    print('  Done creating FAST Standup Assignee spreadsheet')
 
     return None
 
@@ -328,18 +320,18 @@ def create_fast_standup_assignees_ss(assignee_data: AssigneeTeamsData) -> None:
 def create_cell_formatting_options(workbook) -> Type[CellFormats]:
     # create predefined cell_formats to be used for cells in the workbook
     cell_fmt = CellFormats
-    cell_fmt.metrics_ws_fmt = workbook.add_format({'font_name': 'Calibri', 'align': 'center', 'font_size': 12})
-    cell_fmt.left_fmt = workbook.add_format({'align': 'left', 'indent': 1})
-    cell_fmt.left_bold_fmt = workbook.add_format({'align': 'left', 'bold': 1, 'indent': 1})
-    cell_fmt.header_left_fmt = workbook.add_format({'align': 'left', 'bold': 1, 'indent': 1, 'font_size': 12})
-    cell_fmt.header_center_fmt = workbook.add_format({'align': 'center', 'bold': 1, 'font_size': 12})
-    cell_fmt.right_fmt = workbook.add_format({'align': 'right', 'indent': 8})
+    cell_fmt.metrics_ws_fmt = workbook.add_format({'font_name': 'Calibri', 'align': 'center', 'font_size': 14})
+    cell_fmt.left_fmt = workbook.add_format({'align': 'left', 'indent': 1, 'font_size': 14})
+    cell_fmt.left_bold_fmt = workbook.add_format({'align': 'left', 'bold': 1, 'indent': 1, 'font_size': 14})
+    cell_fmt.header_left_fmt = workbook.add_format({'align': 'left', 'bold': 1, 'indent': 1, 'font_size': 14})
+    cell_fmt.header_center_fmt = workbook.add_format({'align': 'center', 'bold': 1, 'font_size': 16})
+    cell_fmt.right_fmt = workbook.add_format({'align': 'right', 'indent': 8, 'font_size': 14})
     cell_fmt.percent_fmt = workbook.add_format({'align': 'right', 'indent': 8, 'num_format': '0%'})
     cell_fmt.percent_center_fmt = workbook.add_format({'align': 'center', 'num_format': '0%'})
-    cell_fmt.center_fmt = workbook.add_format({'align': 'center'})
-    cell_fmt.center_red_fmt = workbook.add_format({'align': 'center', 'font_color': 'red', 'bold': 1})
-    cell_fmt.blue_fmt = workbook.add_format({'align': 'center', 'font_color': 'blue', 'bold': 1})
-    cell_fmt.def_fmt = workbook.add_format({'align': 'left', 'indent': 1, 'text_wrap': 1})
+    cell_fmt.center_fmt = workbook.add_format({'align': 'center', 'font_size': 14})
+    cell_fmt.center_red_fmt = workbook.add_format({'align': 'center', 'font_color': 'red', 'bold': 1, 'font_size': 14})
+    cell_fmt.blue_fmt = workbook.add_format({'align': 'center', 'font_color': 'blue', 'bold': 1, 'font_size': 14})
+    cell_fmt.def_fmt = workbook.add_format({'align': 'left', 'indent': 1, 'text_wrap': 1, 'font_size': 14})
     cell_fmt.table_label_fmt = workbook.add_format({'align': 'left', 'bold': 1, 'font_size': 14})
 
     return cell_fmt
@@ -349,12 +341,13 @@ def create_cell_formatting_options(workbook) -> Type[CellFormats]:
 def create_assignee_ws_column_layout(worksheet, cell_fmts: Type[CellFormats]) -> None:
     # Set the column widths and default cell formatting for the Metrics tab
     # Setup Jira table layout
-    worksheet.set_column('A:A', 20, cell_fmts.center_fmt)
-    worksheet.set_column('B:B', 16, cell_fmts.center_fmt)
-    worksheet.set_column('C:C', 12, cell_fmts.center_fmt)
-    worksheet.set_column('D:D', 80, cell_fmts.center_fmt)
-    worksheet.set_column('E:F', 20, cell_fmts.center_fmt)
-    worksheet.set_column('G:H', 12, cell_fmts.center_fmt)
+    worksheet.set_column('A:A', 25, cell_fmts.center_fmt)
+    worksheet.set_column('B:B', 30, cell_fmts.center_fmt)
+    worksheet.set_column('C:C', 16, cell_fmts.center_fmt)
+    worksheet.set_column('D:D', 98, cell_fmts.center_fmt)
+    worksheet.set_column('E:F', 25, cell_fmts.center_fmt)
+    worksheet.set_column('G:G', 14, cell_fmts.center_fmt)
+    worksheet.set_column('H:H', 19, cell_fmts.center_fmt)
 
     return None
 
