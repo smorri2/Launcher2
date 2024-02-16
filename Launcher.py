@@ -59,6 +59,7 @@ def get_app_to_launch() -> int:
         print('   **         7 - Create Control Report Tracking Spreadsheet      ***')
         print('   **         8 - Create Plan Program Increment Spreadsheet       ***')
         print('   **         9 - Create Sprint Story Dependencies Spreadsheet    ***')
+        print('   **        10 - Create ACH File Review Spreadsheet              ***')
         print('   **         0 - Quit                                            ***')
         print('   **                                                             ***')
         print('   ******************************************************************')
@@ -92,12 +93,15 @@ def get_app_to_launch() -> int:
             case '9':
                 app_to_launch = int(user_input)
                 valid_input = True
+            case '10':
+                app_to_launch = int(user_input)
+                valid_input = True
             case '0':
                 app_to_launch = int(user_input)
                 valid_input = True
             case _:
                 valid_input = False
-                print('\n\n\n   Invalid App Number, valid App Numbers are between 1 & 4 inclusive')
+                print('\n\n\n   Invalid App Number, valid App Numbers are between 1 & 10 inclusive')
 
     return app_to_launch
 
@@ -130,6 +134,8 @@ def main():
                 plan_program_increment()
             case 9:
                 sprint_story_dependencies()
+            case 10:
+                create_fast_ach_file_review_spreadsheet()
             case _:
                 pass
 
